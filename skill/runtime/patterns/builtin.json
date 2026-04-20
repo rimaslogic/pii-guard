@@ -1,0 +1,33 @@
+{
+  "credentials": [
+    {"kind": "aws_access_key", "pattern": "\\bAKIA[0-9A-Z]{16}\\b"},
+    {"kind": "aws_secret_key", "pattern": "(?i)aws(.{0,20})?(secret|access)?(.{0,20})?['\"]([A-Za-z0-9/+=]{40})['\"]"},
+    {"kind": "github_pat", "pattern": "\\bghp_[A-Za-z0-9]{36,}\\b"},
+    {"kind": "github_fine_grained", "pattern": "\\bgithub_pat_[A-Za-z0-9_]{80,}\\b"},
+    {"kind": "openai_key", "pattern": "\\bsk-[A-Za-z0-9]{20,}\\b"},
+    {"kind": "anthropic_key", "pattern": "\\bsk-ant-[A-Za-z0-9_\\-]{20,}\\b"},
+    {"kind": "stripe_live_key", "pattern": "\\bsk_live_[A-Za-z0-9]{24,}\\b"},
+    {"kind": "slack_token", "pattern": "\\bxox[baprs]-[A-Za-z0-9-]{10,}\\b"},
+    {"kind": "google_api_key", "pattern": "\\bAIza[0-9A-Za-z_\\-]{35}\\b"},
+    {"kind": "jwt", "pattern": "\\beyJ[A-Za-z0-9_\\-]{8,}\\.eyJ[A-Za-z0-9_\\-]{8,}\\.[A-Za-z0-9_\\-]{8,}\\b"},
+    {"kind": "private_key_block", "pattern": "-----BEGIN (RSA |EC |OPENSSH |PGP |DSA )?PRIVATE KEY-----"}
+  ],
+  "financial": [
+    {"kind": "card", "pattern": "\\b(?:\\d[ -]?){13,19}\\b", "validator": "luhn"},
+    {"kind": "iban", "pattern": "\\b[A-Z]{2}\\d{2}[A-Z0-9 ]{11,30}\\b", "validator": "iban"}
+  ],
+  "contact": [
+    {"kind": "email", "pattern": "\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b"},
+    {"kind": "phone_e164", "pattern": "(?<!\\d)\\+\\d{1,3}[ \\-]?\\(?\\d{1,4}\\)?[ \\-]?\\d{3,4}[ \\-]?\\d{3,4}\\b"},
+    {"kind": "ipv4", "pattern": "(?<!\\d)(?:\\d{1,3}\\.){3}\\d{1,3}(?!\\d)"}
+  ],
+  "national_id": [
+    {"kind": "us_ssn", "pattern": "(?<!\\d)\\d{3}-\\d{2}-\\d{4}(?!\\d)"},
+    {"kind": "pl_pesel", "pattern": "(?<!\\d)\\d{11}(?!\\d)", "validator": "pesel"},
+    {"kind": "pl_nip", "pattern": "(?<!\\d)\\d{10}(?!\\d)", "validator": "nip"}
+  ],
+  "crypto_wallet": [
+    {"kind": "btc", "pattern": "\\b(?:bc1[ac-hj-np-z02-9]{11,87}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})\\b"},
+    {"kind": "eth", "pattern": "\\b0x[a-fA-F0-9]{40}\\b"}
+  ]
+}

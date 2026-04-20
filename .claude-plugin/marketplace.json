@@ -1,0 +1,16 @@
+{
+  "name": "rimaslogic",
+  "owner": {
+    "name": "Rimas Lukaszewicz",
+    "email": "sm@rimaslogic.pl",
+    "url": "https://github.com/rimaslogic"
+  },
+  "plugins": [
+    {
+      "name": "pii-guard",
+      "source": ".",
+      "description": "Redact or block PII and credentials before they reach the model.",
+      "version": "0.1.0"
+    }
+  ]
+}

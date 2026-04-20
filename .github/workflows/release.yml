@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test deps
+        run: pip install pytest
+
+      - name: Run tests (gate on green)
+        run: pytest -q
+
+      - name: Verify VERSION matches tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          TAG_VERSION="${TAG#v}"
+          FILE_VERSION="$(cat VERSION | tr -d '[:space:]')"
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "Tag $TAG_VERSION does not match VERSION file $FILE_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Build release artifacts
+        run: bash scripts/build-release.sh
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          VERSION="$(cat VERSION | tr -d '[:space:]')"
+          # pull the section between [X.Y.Z] and the next [ heading
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { grab=1; next }
+            grab && /^## \[/ { exit }
+            grab { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          echo "---" >> RELEASE_NOTES.md
+          echo "**SHA-256 checksums:**" >> RELEASE_NOTES.md
+          echo '```' >> RELEASE_NOTES.md
+          cat "dist/pii-guard-${VERSION}.sha256" >> RELEASE_NOTES.md
+          echo '```' >> RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/pii-guard-*.zip
+            dist/pii-guard-*.sha256
+          draft: false
+          prerelease: false

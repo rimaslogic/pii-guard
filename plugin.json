@@ -1,0 +1,13 @@
+{
+  "name": "pii-guard",
+  "version": "0.1.0",
+  "description": "Redact or block PII and credentials before they reach the model.",
+  "author": {
+    "name": "Rimas Lukaszewicz",
+    "email": "sm@rimaslogic.pl",
+    "url": "https://github.com/rimaslogic"
+  },
+  "homepage": "https://github.com/rimaslogic/pii-guard",
+  "license": "MIT",
+  "skills": ["./skill"]
+}
