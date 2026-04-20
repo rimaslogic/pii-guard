@@ -25,7 +25,9 @@ RUNTIME = HOME / ".claude" / "pii-guard"
 SKILL_DIR = pathlib.Path(__file__).resolve().parent.parent
 SOURCE_RUNTIME = SKILL_DIR / "runtime"
 
-HOOK_COMMAND = f"python3 {RUNTIME / 'guard.py'}"
+# Quoted so paths containing spaces (e.g. macOS "Active Directory" homes)
+# still execute correctly when Claude Code passes the command to a shell.
+HOOK_COMMAND = f'python3 "{RUNTIME / "guard.py"}"'
 HOOK_EVENT = "UserPromptSubmit"
 
 DEFAULT_POLICY = {

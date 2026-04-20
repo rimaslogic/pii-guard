@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-04-20
+
+### Security — supply chain & detection hardening
+- **Pin GitHub Actions to commit SHA.** `actions/checkout`, `actions/setup-python`,
+  and `softprops/action-gh-release` are now referenced by full-length SHA with
+  the human tag as a comment. Prevents a compromised upstream maintainer from
+  silently pushing a new `@v2` that exfiltrates `GITHUB_TOKEN`.
+- **Add `permissions: contents: read` to CI workflow.** Release workflow was
+  already minimally scoped; CI now matches.
+- **Add Dependabot config** for weekly GitHub Actions version bumps.
+- **Detect modern OpenAI key formats** (`sk-proj-…`, `sk-svcacct-…`,
+  `sk-admin-…`). Previous regex rejected dashes in the payload and silently
+  missed production keys.
+- **Broaden private-key header detection** to cover `ENCRYPTED PRIVATE KEY`
+  and `SSH2 ENCRYPTED PRIVATE KEY` headers.
+- **Simplify `aws_secret_key` regex** — removed nested optional quantifiers
+  that were inefficient on adversarial input.
+
+### Fixed
+- **Logs are now created with `0600` permissions** (`audit.log`,
+  `transcript.log`). Prevents other local users on shared workstations /
+  multi-user VPSes from reading PII Guard state.
+- **Hook command in `settings.json` is now quoted**, so paths containing
+  spaces (e.g. some macOS directory-service home dirs) don't silently break
+  the hook.
+
+### Added
+- Tests for modern OpenAI key shapes, encrypted private key headers, and
+  log file permission mode (0600).
+
 ## [0.2.0] - 2026-04-20
 
 ### Changed — BREAKING

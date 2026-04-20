@@ -179,3 +179,41 @@ def test_legacy_redact_policy_still_blocks(tmp_path):
     r = _run(home, "card 4111 1111 1111 1111")
     d = _decision(r)
     assert d and d["decision"] == "block"
+
+
+# -------- modern credential shapes --------
+
+def test_openai_project_key_blocked(tmp_path):
+    home = _fresh_home(tmp_path)
+    # Modern OpenAI project key shape: sk-proj-<alnum/underscore/dash>+
+    r = _run(home, "export OPENAI_API_KEY=sk-proj-AbCd_1234-EfGh-IjKl-MnOp-QrSt-UvWxYz0987654321")
+    d = _decision(r)
+    assert d and d["decision"] == "block"
+    assert "credentials" in d["reason"]
+
+
+def test_openai_service_account_key_blocked(tmp_path):
+    home = _fresh_home(tmp_path)
+    r = _run(home, "key=sk-svcacct-ABCDEF1234567890abcdefGHIJKLMNOP_-XYZ123")
+    d = _decision(r)
+    assert d and d["decision"] == "block"
+
+
+def test_encrypted_private_key_header_blocked(tmp_path):
+    home = _fresh_home(tmp_path)
+    r = _run(home, "here it is:\n-----BEGIN ENCRYPTED PRIVATE KEY-----\nblah")
+    d = _decision(r)
+    assert d and d["decision"] == "block"
+
+
+# -------- log file permissions --------
+
+def test_logs_are_mode_0600(tmp_path):
+    home = _fresh_home(tmp_path, state_override={"transcript": True})
+    _run(home, "card 4111 1111 1111 1111")
+    import stat
+    for name in ("audit.log", "transcript.log"):
+        p = home / name
+        assert p.exists(), name
+        mode = stat.S_IMODE(p.stat().st_mode)
+        assert mode == 0o600, f"{name} mode={oct(mode)}"

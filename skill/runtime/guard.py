@@ -172,12 +172,26 @@ def find_matches(text: str) -> dict:
     return found
 
 
+def _append_secure(path: pathlib.Path, line: str) -> None:
+    """Append a line to `path`, creating it with 0600 perms so other users
+    on the machine can't read our logs."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.write(fd, line.encode("utf-8"))
+    finally:
+        os.close(fd)
+    # Tighten perms if the file pre-existed with looser mode.
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 def audit(event: dict) -> None:
     try:
-        AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
         event["ts"] = datetime.now(timezone.utc).isoformat()
-        with AUDIT_LOG.open("a") as fh:
-            fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+        _append_secure(AUDIT_LOG, json.dumps(event, ensure_ascii=False) + "\n")
     except Exception:
         pass
 
@@ -186,14 +200,13 @@ def transcript(event: dict) -> None:
     """Opt-in: record the exact input and output bytes that crossed the hook.
     Enabled by setting state.transcript = true (via `cli.py transcript on`).
     WARNING: the transcript file contains the ORIGINAL unredacted prompt.
+    File is created with 0600 perms.
     """
     if not state().get("transcript"):
         return
     try:
-        TRANSCRIPT_LOG.parent.mkdir(parents=True, exist_ok=True)
         event["ts"] = datetime.now(timezone.utc).isoformat()
-        with TRANSCRIPT_LOG.open("a") as fh:
-            fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+        _append_secure(TRANSCRIPT_LOG, json.dumps(event, ensure_ascii=False) + "\n")
     except Exception:
         pass
 
