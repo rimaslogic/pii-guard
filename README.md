@@ -21,8 +21,8 @@ You can change any category's action (`block` / `redact` / `warn` / `allow`) via
 ### Option A — Claude Code plugin (recommended)
 
 ```
-/plugin marketplace add github:rimaslogic/pii-guard
-/plugin install pii-guard
+/plugin marketplace add rimaslogic/pii-guard
+/plugin install pii-guard@rimaslogic
 ```
 
 Then `/reload` and you're done.
