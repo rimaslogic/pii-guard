@@ -28,6 +28,7 @@ POLICY_FILE = ROOT / "policy.json"
 PATTERNS_DIR = ROOT / "patterns"
 FALLBACK_PATTERNS_DIR = SCRIPT_DIR / "patterns"
 AUDIT_LOG = ROOT / "audit.log"
+TRANSCRIPT_LOG = ROOT / "transcript.log"
 
 INLINE_BYPASS = "!pii-allow"
 CATEGORIES = ("credentials", "financial", "national_id", "crypto_wallet", "contact")
@@ -196,6 +197,22 @@ def audit(event: dict) -> None:
     except Exception:
         pass
 
+
+def transcript(event: dict) -> None:
+    """Opt-in: record the exact input and output bytes that crossed the hook.
+    Enabled by setting state.transcript = true (via `cli.py transcript on`).
+    WARNING: the transcript file contains the ORIGINAL unredacted prompt.
+    """
+    if not state().get("transcript"):
+        return
+    try:
+        TRANSCRIPT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        event["ts"] = datetime.now(timezone.utc).isoformat()
+        with TRANSCRIPT_LOG.open("a") as fh:
+            fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
 # ---------- main ----------
 
 def passthrough() -> None:
@@ -216,6 +233,8 @@ def block(reason: str) -> None:
 def run(input_text: str) -> None:
     active = active_categories()
     if not active:
+        transcript({"action": "passthrough", "reason": "disabled",
+                    "input": input_text, "output": input_text})
         passthrough()
 
     prompt = input_text
@@ -231,13 +250,14 @@ def run(input_text: str) -> None:
         active = {"credentials"}
 
     pol = policy()
-    actions_by_cat: dict = {}
 
     # Block if any active category with 'block' policy has hits
     for cat in active:
         if pol.get(cat) == "block" and matches.get(cat):
             kinds = sorted({k for _, k in matches[cat]})
             audit({"action": "block", "category": cat, "kinds": kinds})
+            transcript({"action": "block", "input": input_text,
+                        "output": None, "category": cat, "kinds": kinds})
             block(f"{cat} detected ({', '.join(kinds)}) — remove before resending.")
 
     new_prompt, actions = apply_redactions(prompt, matches, pol, active)
@@ -249,6 +269,8 @@ def run(input_text: str) -> None:
             summary_bits.append(f"{cat}:{n} ({actions[cat]})")
 
     if not summary_bits and not bypassed:
+        transcript({"action": "passthrough", "reason": "no-matches",
+                    "input": input_text, "output": input_text})
         passthrough()
 
     audit({
@@ -259,7 +281,10 @@ def run(input_text: str) -> None:
     })
 
     banner = f"\n\n[🛡️ PII Guard: {', '.join(summary_bits) if summary_bits else 'passthrough'}]"
-    emit_prompt(new_prompt + banner)
+    final = new_prompt + banner
+    transcript({"action": "modify", "bypassed": bypassed,
+                "input": input_text, "output": final, "actions": actions})
+    emit_prompt(final)
 
 
 def main() -> None:

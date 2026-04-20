@@ -179,6 +179,53 @@ def cmd_policy(args: argparse.Namespace) -> None:
         print(f"  {cat:<14} {pol.get(cat)}")
 
 
+def cmd_transcript(args: argparse.Namespace) -> None:
+    """Enable/disable/view the transcript log (off by default).
+
+    When on, guard.py writes each hook invocation (input + output) to
+    ~/.claude/pii-guard/transcript.log. Useful to verify that what reaches
+    the model matches what you expect. WARNING: the log contains the
+    original UNREDACTED prompt.
+    """
+    st = load(STATE_FILE, DEFAULT_STATE)
+    transcript_log = ROOT / "transcript.log"
+
+    if args.action == "on":
+        st["transcript"] = True
+        save(STATE_FILE, st)
+        print("[pii-guard] transcript ON.")
+        print(f"  log: {transcript_log}")
+        print("  ⚠️  this file contains your ORIGINAL prompts including PII. "
+              "Delete when done auditing.")
+        return
+    if args.action == "off":
+        st["transcript"] = False
+        save(STATE_FILE, st)
+        print("[pii-guard] transcript OFF.")
+        return
+    if args.action == "clear":
+        if transcript_log.exists():
+            transcript_log.unlink()
+            print(f"[pii-guard] cleared: {transcript_log}")
+        else:
+            print("[pii-guard] nothing to clear.")
+        return
+    if args.action == "show":
+        if not transcript_log.exists():
+            print("[pii-guard] no transcript yet.")
+            return
+        n = args.lines or 1
+        lines = transcript_log.read_text().splitlines()[-n:]
+        for line in lines:
+            try:
+                evt = json.loads(line)
+                print(json.dumps(evt, indent=2, ensure_ascii=False))
+                print("-" * 60)
+            except json.JSONDecodeError:
+                print(line)
+        return
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="pii-guard")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -200,6 +247,15 @@ def build_parser() -> argparse.ArgumentParser:
     po.add_argument("--set", action="append", default=[], metavar="CAT=ACTION")
     po.add_argument("--show", action="store_true")
     po.set_defaults(func=cmd_policy)
+
+    tr = sub.add_parser(
+        "transcript",
+        help="enable/disable/view the on-disk transcript of what the hook sends",
+    )
+    tr.add_argument("action", choices=["on", "off", "show", "clear"])
+    tr.add_argument("--lines", "-n", type=int, default=1,
+                    help="for 'show': how many recent entries to print")
+    tr.set_defaults(func=cmd_transcript)
 
     return p
 

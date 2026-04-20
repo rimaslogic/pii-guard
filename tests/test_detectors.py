@@ -133,3 +133,26 @@ def test_policy_redact_contact(tmp_path):
     r = _run(home, "email demo@example.com")
     assert "demo@example.com" not in r.stdout
     assert "[EMAIL_1]" in r.stdout
+
+
+def test_transcript_off_by_default(tmp_path):
+    home = _fresh_home(tmp_path)
+    _run(home, "card 4111 1111 1111 1111")
+    assert not (home / "transcript.log").exists()
+
+
+def test_transcript_when_enabled_captures_input_and_output(tmp_path):
+    home = _fresh_home(tmp_path)
+    state_path = home / "state.json"
+    state_path.write_text(json.dumps({
+        "enabled": True, "disabled_until": None,
+        "disabled_categories": [], "transcript": True,
+    }))
+    _run(home, "card 4111 1111 1111 1111")
+    log = (home / "transcript.log").read_text().strip().splitlines()
+    assert len(log) == 1
+    evt = json.loads(log[0])
+    assert evt["action"] == "modify"
+    assert "4111 1111 1111 1111" in evt["input"]        # raw input logged
+    assert "4111 1111 1111 1111" not in evt["output"]    # output redacted
+    assert "[CARD_1]" in evt["output"]

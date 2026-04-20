@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-04-20
+
+### Added
+- **Opt-in transcript log** — proves byte-for-byte what the hook sends to
+  the model. Enable with `cli.py transcript on`; writes each invocation
+  (input + output) to `~/.claude/pii-guard/transcript.log`. Off by default
+  because the file contains the original unredacted prompts.
+- CLI: `transcript on | off | show [-n N] | clear`.
+- Tests: transcript off by default; when on, captures raw input and redacted
+  output for a card prompt.
+
 ## [0.1.1] - 2026-04-20
 
 ### Fixed
