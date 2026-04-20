@@ -22,9 +22,11 @@ from datetime import datetime, timezone
 ROOT = pathlib.Path(
     os.environ.get("PII_GUARD_HOME", pathlib.Path.home() / ".claude" / "pii-guard")
 )
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 STATE_FILE = ROOT / "state.json"
 POLICY_FILE = ROOT / "policy.json"
 PATTERNS_DIR = ROOT / "patterns"
+FALLBACK_PATTERNS_DIR = SCRIPT_DIR / "patterns"
 AUDIT_LOG = ROOT / "audit.log"
 
 INLINE_BYPASS = "!pii-allow"
@@ -124,9 +126,15 @@ def active_categories() -> set:
 
 
 def load_patterns() -> dict:
+    """Load patterns from PATTERNS_DIR with fallback to bundled patterns
+    (shipped next to guard.py). Lets the hook work even before the installer
+    has copied anything to ~/.claude/pii-guard/ (e.g. when invoked as a plugin)."""
     merged = {cat: [] for cat in CATEGORIES}
     for fname in ("builtin.json", "custom.json"):
-        data = load_json(PATTERNS_DIR / fname, {})
+        path = PATTERNS_DIR / fname
+        if not path.exists():
+            path = FALLBACK_PATTERNS_DIR / fname
+        data = load_json(path, {})
         for cat, items in data.items():
             if cat in merged and isinstance(items, list):
                 merged[cat].extend(items)
