@@ -1,6 +1,8 @@
 """
-Unit tests for PII Guard detectors. Runs guard.py against a temporary
-PII_GUARD_HOME so the tests never touch the user's real runtime.
+Unit tests for PII Guard. v0.2.0 contract:
+- guard.py either passes through (exit 0, empty stdout) or blocks
+  (exit 0, stdout JSON {"decision": "block", "reason": "..."}).
+- Exit 2 is no longer used; 'redact' / 'warn' policies no longer exist.
 """
 from __future__ import annotations
 
@@ -16,22 +18,24 @@ SKILL_RUNTIME = ROOT / "skill" / "runtime"
 GUARD = SKILL_RUNTIME / "guard.py"
 
 
-def _fresh_home(tmp_path: pathlib.Path, policy_override: dict | None = None) -> pathlib.Path:
+def _fresh_home(tmp_path: pathlib.Path, policy_override: dict | None = None,
+                state_override: dict | None = None) -> pathlib.Path:
     home = tmp_path / "pii-guard"
     home.mkdir()
     (home / "patterns").mkdir()
     shutil.copy2(SKILL_RUNTIME / "patterns" / "builtin.json", home / "patterns" / "builtin.json")
     shutil.copy2(SKILL_RUNTIME / "patterns" / "custom.json", home / "patterns" / "custom.json")
     shutil.copy2(GUARD, home / "guard.py")
-    (home / "state.json").write_text(json.dumps(
-        {"enabled": True, "disabled_until": None, "disabled_categories": []}
-    ))
+    state = {"enabled": True, "disabled_until": None, "disabled_categories": []}
+    if state_override:
+        state.update(state_override)
+    (home / "state.json").write_text(json.dumps(state))
     policy = {
         "credentials": "block",
-        "financial": "redact",
-        "national_id": "redact",
-        "crypto_wallet": "redact",
-        "contact": "warn",
+        "financial": "block",
+        "national_id": "block",
+        "crypto_wallet": "block",
+        "contact": "block",
     }
     if policy_override:
         policy.update(policy_override)
@@ -52,88 +56,104 @@ def _run(home: pathlib.Path, prompt: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_email_is_warned_not_redacted_by_default(tmp_path):
+def _decision(proc: subprocess.CompletedProcess) -> dict | None:
+    """Parse guard.py's block-decision JSON, or return None if passthrough."""
+    if not proc.stdout.strip():
+        return None
+    return json.loads(proc.stdout)
+
+
+# -------- passthrough cases --------
+
+def test_clean_prompt_passes_through(tmp_path):
     home = _fresh_home(tmp_path)
-    r = _run(home, "contact me at demo@example.com please")
+    r = _run(home, "what's the weather today?")
     assert r.returncode == 0
-    assert "demo@example.com" in r.stdout  # warn keeps the value visible
-    assert "contact:1" in r.stdout
+    assert r.stdout.strip() == ""  # nothing emitted = prompt unchanged
 
 
-def test_valid_card_is_redacted(tmp_path):
+def test_disabled_passes_through_even_with_pii(tmp_path):
+    home = _fresh_home(tmp_path, state_override={"enabled": False})
+    r = _run(home, "card 4111 1111 1111 1111")
+    assert r.returncode == 0
+    assert r.stdout.strip() == ""
+
+
+def test_category_allow_lets_it_through(tmp_path):
+    home = _fresh_home(tmp_path, policy_override={"contact": "allow"})
+    r = _run(home, "email me at demo@example.com")
+    assert r.returncode == 0
+    assert r.stdout.strip() == ""
+
+
+# -------- block cases --------
+
+def test_valid_card_is_blocked(tmp_path):
     home = _fresh_home(tmp_path)
-    r = _run(home, "my card is 4111 1111 1111 1111 expires tomorrow")
-    assert r.returncode == 0
-    assert "4111 1111 1111 1111" not in r.stdout
-    assert "[CARD_1]" in r.stdout
+    r = _run(home, "my card is 4111 1111 1111 1111 and something else")
+    d = _decision(r)
+    assert d and d["decision"] == "block"
+    # Reason contains detected category and a safe rewrite suggestion.
+    assert "financial" in d["reason"]
+    assert "[CARD_1]" in d["reason"]
+    # Reason goes to the USER, so the original digits MAY appear in it for
+    # diagnostic purposes — but NOT in the separate "output" path to the model.
+    # (The block decision itself replaces the prompt; model gets nothing.)
 
 
-def test_invalid_card_is_ignored(tmp_path):
+def test_invalid_card_is_not_blocked(tmp_path):
     home = _fresh_home(tmp_path)
     r = _run(home, "order id 1234 5678 9012 3456")  # fails Luhn
-    assert r.returncode == 0
-    # nothing to redact, no actions triggered → passthrough (empty stdout)
-    assert r.stdout.strip() == ""
+    assert _decision(r) is None  # passthrough
 
 
 def test_aws_key_is_blocked(tmp_path):
     home = _fresh_home(tmp_path)
     r = _run(home, "here is the key AKIAIOSFODNN7EXAMPLE")
-    assert r.returncode == 2
-    assert "blocked" in r.stderr
-    assert "credentials" in r.stderr
+    d = _decision(r)
+    assert d and d["decision"] == "block"
+    assert "credentials" in d["reason"]
 
 
-def test_github_pat_is_blocked(tmp_path):
+def test_email_is_blocked_by_default(tmp_path):
     home = _fresh_home(tmp_path)
-    r = _run(home, "token ghp_abcdefghijklmnopqrstuvwxyz0123456789")
-    assert r.returncode == 2
+    r = _run(home, "email me at demo@example.com")
+    d = _decision(r)
+    assert d and d["decision"] == "block"
+    assert "contact" in d["reason"]
 
 
-def test_valid_iban_is_redacted(tmp_path):
+def test_valid_iban_is_blocked(tmp_path):
     home = _fresh_home(tmp_path)
     r = _run(home, "my iban is GB82WEST12345698765432")
-    assert r.returncode == 0
-    assert "GB82WEST12345698765432" not in r.stdout
-    assert "[IBAN_1]" in r.stdout
+    d = _decision(r)
+    assert d and d["decision"] == "block"
 
 
 def test_pesel_checksum_enforced(tmp_path):
     home = _fresh_home(tmp_path)
-    # valid PESEL
-    r1 = _run(home, "pesel 44051401458")
-    assert "[PL_PESEL_1]" in r1.stdout
-    # random 11 digits that fail checksum → ignored
-    r2 = _run(home, "reference 12345678901")
-    assert "[PL_PESEL_1]" not in r2.stdout
+    r1 = _run(home, "pesel 44051401458")                  # valid
+    assert _decision(r1)["decision"] == "block"
+    r2 = _run(home, "reference 12345678901")              # invalid checksum
+    assert _decision(r2) is None
 
 
-def test_inline_bypass_allows_emails_but_not_credentials(tmp_path):
+# -------- inline bypass --------
+
+def test_bypass_lets_contact_through(tmp_path):
     home = _fresh_home(tmp_path)
-    r = _run(home, "!pii-allow contact me at demo@example.com")
-    # credentials still checked; nothing blocks; email passes through
-    assert r.returncode == 0
-    # bypassed email stays, no contact redaction happened
-    assert "demo@example.com" in r.stdout or r.stdout.strip() == ""
-
-    r2 = _run(home, "!pii-allow key AKIAIOSFODNN7EXAMPLE")
-    assert r2.returncode == 2  # credentials still blocked
+    r = _run(home, "!pii-allow email me at demo@example.com")
+    assert _decision(r) is None  # bypass → passthrough for non-credentials
 
 
-def test_disabled_passthrough(tmp_path):
+def test_bypass_still_blocks_credentials(tmp_path):
     home = _fresh_home(tmp_path)
-    (home / "state.json").write_text(json.dumps({"enabled": False}))
-    r = _run(home, "card 4111 1111 1111 1111")
-    assert r.returncode == 0
-    assert r.stdout.strip() == ""  # passthrough
+    r = _run(home, "!pii-allow key AKIAIOSFODNN7EXAMPLE")
+    d = _decision(r)
+    assert d and d["decision"] == "block"
 
 
-def test_policy_redact_contact(tmp_path):
-    home = _fresh_home(tmp_path, policy_override={"contact": "redact"})
-    r = _run(home, "email demo@example.com")
-    assert "demo@example.com" not in r.stdout
-    assert "[EMAIL_1]" in r.stdout
-
+# -------- transcript --------
 
 def test_transcript_off_by_default(tmp_path):
     home = _fresh_home(tmp_path)
@@ -141,18 +161,21 @@ def test_transcript_off_by_default(tmp_path):
     assert not (home / "transcript.log").exists()
 
 
-def test_transcript_when_enabled_captures_input_and_output(tmp_path):
-    home = _fresh_home(tmp_path)
-    state_path = home / "state.json"
-    state_path.write_text(json.dumps({
-        "enabled": True, "disabled_until": None,
-        "disabled_categories": [], "transcript": True,
-    }))
+def test_transcript_on_captures_block(tmp_path):
+    home = _fresh_home(tmp_path, state_override={"transcript": True})
     _run(home, "card 4111 1111 1111 1111")
-    log = (home / "transcript.log").read_text().strip().splitlines()
-    assert len(log) == 1
-    evt = json.loads(log[0])
-    assert evt["action"] == "modify"
-    assert "4111 1111 1111 1111" in evt["input"]        # raw input logged
-    assert "4111 1111 1111 1111" not in evt["output"]    # output redacted
-    assert "[CARD_1]" in evt["output"]
+    lines = (home / "transcript.log").read_text().strip().splitlines()
+    assert len(lines) == 1
+    evt = json.loads(lines[0])
+    assert evt["action"] == "block"
+    assert "4111 1111 1111 1111" in evt["input"]
+    assert evt["output"] is None  # nothing was sent to the model
+
+
+# -------- legacy policy values map to block --------
+
+def test_legacy_redact_policy_still_blocks(tmp_path):
+    home = _fresh_home(tmp_path, policy_override={"financial": "redact"})
+    r = _run(home, "card 4111 1111 1111 1111")
+    d = _decision(r)
+    assert d and d["decision"] == "block"

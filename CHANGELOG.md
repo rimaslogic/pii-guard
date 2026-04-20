@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-20
+
+### Changed — BREAKING
+- **All detected PII now BLOCKS the prompt.** Previously, `redact` and `warn`
+  policies pretended to rewrite the prompt — but Claude Code's
+  `UserPromptSubmit` hook API cannot modify prompt text in flight. It can
+  only block or pass through. Using `redact` therefore silently let the raw
+  PII reach the model, with a misleading banner suggesting otherwise.
+- New default policy: every category is `block`. The actions `redact` and
+  `warn` still parse for backwards compatibility but are mapped to `block`
+  (with a notice printed by the CLI).
+- When a prompt is blocked, the user sees a clear reason containing a safe
+  rewrite suggestion (with PII tokens like `[CARD_1]`) they can copy, edit,
+  and resend. The original prompt never reaches the model.
+- Block is now emitted via the documented `{"decision": "block", "reason":
+  "..."}` JSON + exit 0 contract (previously we used exit 2 + stderr, which
+  still worked but is less clean).
+
+### Security
+- Closes a correctness gap: the tool's previous "redact" behaviour was
+  ineffective. Users should upgrade to v0.2.0 immediately. If you relied on
+  `redact` to silently sanitize prompts, you will now see **block** decisions
+  instead — your PII never left the machine; nothing leaked that wasn't
+  already leaking in v0.1.x.
+
 ## [0.1.2] - 2026-04-20
 
 ### Added

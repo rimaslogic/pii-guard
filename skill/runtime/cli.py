@@ -28,13 +28,17 @@ POLICY_FILE = ROOT / "policy.json"
 GUARD = ROOT / "guard.py"
 
 CATEGORIES = ("credentials", "financial", "national_id", "crypto_wallet", "contact")
-ACTIONS = ("block", "redact", "warn", "allow")
+# 'block' stops the prompt before the model sees it. 'allow' lets it through.
+# 'redact' / 'warn' are legacy aliases kept for backwards compat — both map to
+# 'block' because Claude Code's hook API cannot rewrite prompts in flight.
+ACTIONS = ("block", "allow")
+LEGACY_ACTIONS = {"redact": "block", "warn": "block"}
 DEFAULT_POLICY = {
     "credentials": "block",
-    "financial": "redact",
-    "national_id": "redact",
-    "crypto_wallet": "redact",
-    "contact": "warn",
+    "financial": "block",
+    "national_id": "block",
+    "crypto_wallet": "block",
+    "contact": "block",
 }
 DEFAULT_STATE = {
     "enabled": True,
@@ -170,6 +174,11 @@ def cmd_policy(args: argparse.Namespace) -> None:
             cat, action = cat.strip(), action.strip()
             if cat not in CATEGORIES:
                 raise SystemExit(f"unknown category: {cat}")
+            if action in LEGACY_ACTIONS:
+                new_action = LEGACY_ACTIONS[action]
+                print(f"[pii-guard] note: '{action}' is no longer supported "
+                      f"(Claude Code hooks can't rewrite prompts). Using '{new_action}' instead.")
+                action = new_action
             if action not in ACTIONS:
                 raise SystemExit(f"unknown action: {action} (one of {', '.join(ACTIONS)})")
             pol[cat] = action

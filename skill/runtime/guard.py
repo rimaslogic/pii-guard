@@ -34,11 +34,16 @@ INLINE_BYPASS = "!pii-allow"
 CATEGORIES = ("credentials", "financial", "national_id", "crypto_wallet", "contact")
 DEFAULT_POLICY = {
     "credentials": "block",
-    "financial": "redact",
-    "national_id": "redact",
-    "crypto_wallet": "redact",
-    "contact": "warn",
+    "financial": "block",
+    "national_id": "block",
+    "crypto_wallet": "block",
+    "contact": "block",
 }
+# Only 'block' and 'allow' are honest actions. Claude Code's UserPromptSubmit
+# hook cannot rewrite the user's text — it can only block it or pass through.
+# The legacy 'redact' / 'warn' actions were misleading and are now treated as
+# aliases for 'block' (with a suggested safe rewrite shown in the block reason).
+LEGACY_ACTION_MAP = {"redact": "block", "warn": "block"}
 
 # ---------- checksum validators ----------
 
@@ -112,7 +117,9 @@ def state() -> dict:
 
 def policy() -> dict:
     p = load_json(POLICY_FILE, {})
-    return {**DEFAULT_POLICY, **p}
+    merged = {**DEFAULT_POLICY, **p}
+    # Map legacy actions to 'block' so old policy files still behave safely.
+    return {k: LEGACY_ACTION_MAP.get(v, v) for k, v in merged.items()}
 
 
 def active_categories() -> set:
@@ -165,29 +172,6 @@ def find_matches(text: str) -> dict:
     return found
 
 
-def apply_redactions(text: str, matches: dict, policy_map: dict, active: set) -> tuple[str, dict]:
-    """Return (new_text, actions) where actions is {category: action_applied}."""
-    actions: dict = {}
-    # highest severity categories first
-    order = ["credentials", "financial", "national_id", "crypto_wallet", "contact"]
-    for cat in order:
-        if cat not in active:
-            continue
-        hits = matches.get(cat, [])
-        if not hits:
-            continue
-        action = policy_map.get(cat, "warn")
-        actions[cat] = action
-        if action in ("redact", "block"):
-            counter: dict = {}
-            for hit, kind in hits:
-                counter.setdefault(kind, 0)
-                counter[kind] += 1
-                token = f"[{kind.upper()}_{counter[kind]}]"
-                text = text.replace(hit, token)
-    return text, actions
-
-
 def audit(event: dict) -> None:
     try:
         AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -215,27 +199,42 @@ def transcript(event: dict) -> None:
 
 # ---------- main ----------
 
-def passthrough() -> None:
+def passthrough(input_text: str, reason: str) -> None:
     """Exit 0 with no output => Claude Code uses the prompt unchanged."""
+    transcript({"action": "passthrough", "reason": reason,
+                "input": input_text, "output": input_text})
     sys.exit(0)
 
 
-def emit_prompt(new_prompt: str) -> None:
-    json.dump({"prompt": new_prompt}, sys.stdout, ensure_ascii=False)
+def emit_block(reason: str) -> None:
+    """Emit the documented block JSON. Claude Code shows `reason` to the user
+    and discards the original prompt — it does NOT reach the model."""
+    json.dump({"decision": "block", "reason": reason},
+              sys.stdout, ensure_ascii=False)
     sys.exit(0)
 
 
-def block(reason: str) -> None:
-    sys.stderr.write(f"[pii-guard] blocked: {reason}\n")
-    sys.exit(2)
+def build_suggested_rewrite(prompt: str, matches: dict, active: set) -> str:
+    """Produce a PII-free version of the prompt the user can copy and resend.
+    This string is shown to the USER, not sent to the model."""
+    # Replace every hit in every active category with a labelled token.
+    out = prompt
+    counters: dict = {}
+    for cat in ("credentials", "financial", "national_id", "crypto_wallet", "contact"):
+        if cat not in active:
+            continue
+        for hit, kind in matches.get(cat, []):
+            counters.setdefault(kind, 0)
+            counters[kind] += 1
+            out = out.replace(hit, f"[{kind.upper()}_{counters[kind]}]")
+    return out
 
 
 def run(input_text: str) -> None:
     active = active_categories()
     if not active:
-        transcript({"action": "passthrough", "reason": "disabled",
-                    "input": input_text, "output": input_text})
-        passthrough()
+        passthrough(input_text, "disabled")
+        return
 
     prompt = input_text
     bypassed = False
@@ -245,46 +244,48 @@ def run(input_text: str) -> None:
 
     matches = find_matches(prompt)
 
-    # credentials are ALWAYS enforced, even with bypass
+    # Inline bypass: credentials are ALWAYS enforced, other categories skipped.
     if bypassed:
-        active = {"credentials"}
+        active = {"credentials"} & active
 
     pol = policy()
 
-    # Block if any active category with 'block' policy has hits
+    # Any active category with action=block that has hits?
+    blocked_hits: dict = {}
     for cat in active:
         if pol.get(cat) == "block" and matches.get(cat):
-            kinds = sorted({k for _, k in matches[cat]})
-            audit({"action": "block", "category": cat, "kinds": kinds})
-            transcript({"action": "block", "input": input_text,
-                        "output": None, "category": cat, "kinds": kinds})
-            block(f"{cat} detected ({', '.join(kinds)}) — remove before resending.")
+            blocked_hits[cat] = matches[cat]
 
-    new_prompt, actions = apply_redactions(prompt, matches, pol, active)
+    if not blocked_hits:
+        # No PII in blocking categories — let the prompt through untouched.
+        passthrough(input_text, "no-block-matches")
+        return
 
-    summary_bits = []
-    for cat in CATEGORIES:
-        if cat in actions:
-            n = len(matches.get(cat, []))
-            summary_bits.append(f"{cat}:{n} ({actions[cat]})")
+    # Build user-facing block message with a safe rewrite suggestion.
+    summary = []
+    for cat, hits in blocked_hits.items():
+        kinds = sorted({k for _, k in hits})
+        summary.append(f"{cat} ({', '.join(kinds)})")
 
-    if not summary_bits and not bypassed:
-        transcript({"action": "passthrough", "reason": "no-matches",
-                    "input": input_text, "output": input_text})
-        passthrough()
+    # Rewrite suggestion covers ALL matches (not only the blocking ones) so the
+    # user can paste something clean even if they later loosen the policy.
+    suggested = build_suggested_rewrite(prompt, matches, set(CATEGORIES))
 
-    audit({
-        "action": "modify",
-        "bypassed": bypassed,
-        "counts": {c: len(matches.get(c, [])) for c in CATEGORIES if matches.get(c)},
-        "actions": actions,
-    })
+    reason = (
+        "🛡️  PII Guard blocked your prompt before it reached the model.\n\n"
+        f"Detected: {'; '.join(summary)}\n\n"
+        "Safe rewrite (copy, edit as needed, and resend):\n"
+        f"\n{suggested}\n\n"
+        "To override for everything except credentials, prefix your prompt with `!pii-allow`.\n"
+        "To change what gets blocked, run `pii-guard policy --set <category>=allow`."
+    )
 
-    banner = f"\n\n[🛡️ PII Guard: {', '.join(summary_bits) if summary_bits else 'passthrough'}]"
-    final = new_prompt + banner
-    transcript({"action": "modify", "bypassed": bypassed,
-                "input": input_text, "output": final, "actions": actions})
-    emit_prompt(final)
+    audit({"action": "block", "bypassed": bypassed,
+           "categories": sorted(blocked_hits.keys())})
+    transcript({"action": "block", "input": input_text, "output": None,
+                "bypassed": bypassed, "reason": reason,
+                "categories": sorted(blocked_hits.keys())})
+    emit_block(reason)
 
 
 def main() -> None:

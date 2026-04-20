@@ -30,10 +30,10 @@ HOOK_EVENT = "UserPromptSubmit"
 
 DEFAULT_POLICY = {
     "credentials": "block",
-    "financial": "redact",
-    "national_id": "redact",
-    "crypto_wallet": "redact",
-    "contact": "warn",
+    "financial": "block",
+    "national_id": "block",
+    "crypto_wallet": "block",
+    "contact": "block",
 }
 DEFAULT_STATE = {
     "enabled": True,
@@ -122,11 +122,19 @@ def verify() -> bool:
     except Exception as e:
         log(f"verify failed to run guard: {e}")
         return False
-    # Expect redaction: stdout contains token, not the raw card.
-    if "4111 1111 1111 1111" in res.stdout:
-        log("verify failed: card number was NOT redacted")
+    # Expect a block decision in stdout JSON, exit 0.
+    if res.returncode != 0:
+        log(f"verify failed: guard exited {res.returncode} (expected 0 with block JSON)")
         return False
-    log("verify ok: sample card was redacted by guard.py")
+    try:
+        parsed = json.loads(res.stdout)
+    except Exception:
+        log("verify failed: guard stdout was not JSON")
+        return False
+    if parsed.get("decision") != "block":
+        log(f"verify failed: expected decision=block, got {parsed!r}")
+        return False
+    log("verify ok: sample card produced a block decision")
     return True
 
 

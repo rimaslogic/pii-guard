@@ -39,7 +39,8 @@ jobs:
           test -f "$HOME/.claude/settings.json"
           python3 "$HOME/.claude/pii-guard/cli.py" status
           python3 "$HOME/.claude/pii-guard/cli.py" test "card 4111 1111 1111 1111" | tee /tmp/out
-          grep -q '\[CARD_1\]' /tmp/out
+          grep -q '"decision"' /tmp/out
+          grep -q '"block"' /tmp/out
       - name: Uninstall cleanly
         run: |
           export HOME="$(mktemp -d)"
